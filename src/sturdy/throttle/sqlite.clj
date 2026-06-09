@@ -4,7 +4,8 @@
    [ragtime.repl :as ragtime.repl]
    [sturdy.sqlite.core :refer [make-datasource]]
    [sturdy.sqlite.types :as types]
-   [sturdy.throttle.core :refer [RateLimiter]]))
+   [sturdy.throttle.core :refer [RateLimiter]]
+   [taoensso.telemere :as t]))
 
 (def ^:const minute-ms 60000)
 (def ^:const hour-ms 3600000)
@@ -50,7 +51,7 @@
                        true
                        false))
                    (catch Exception e
-                     (println "sturdy-throttle SQLite error:" (.getMessage e))
+                     (t/log! {:level :error} (str "sturdy-throttle SQLite error: " (.getMessage e)))
                      false))]
 
       ;; Async prune using probability
