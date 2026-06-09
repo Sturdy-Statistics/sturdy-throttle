@@ -21,15 +21,15 @@
 (defn admit-sql
   "A single atomic statement that checks the rate limit and UPSERTs if allowed.
    Returns 1 updated row if admitted, or 0 if rejected by the WHERE clause."
-  [org-id bucket-ms window-start limit]
-  ["INSERT INTO api_minute_buckets (organization_id, bucket_start_ms, request_count)
-    SELECT ?, ?, 1
+  [org-id rate-key bucket-ms window-start limit]
+  ["INSERT INTO api_minute_buckets (organization_id, rate_key, bucket_start_ms, request_count)
+    SELECT ?, ?, ?, 1
     WHERE (SELECT COALESCE(SUM(request_count), 0)
            FROM api_minute_buckets
-           WHERE organization_id = ? AND bucket_start_ms >= ?) < ?
-    ON CONFLICT (organization_id, bucket_start_ms)
+           WHERE organization_id = ? AND rate_key = ? AND bucket_start_ms >= ?) < ?
+    ON CONFLICT (organization_id, rate_key, bucket_start_ms)
     DO UPDATE SET request_count = request_count + 1"
-   org-id bucket-ms org-id window-start limit])
+   org-id rate-key bucket-ms org-id rate-key window-start limit])
 
 (defn prune-sql [now-ms]
   (let [cutoff (- (bucket-start-ms now-ms) hour-ms)]
@@ -37,12 +37,13 @@
 
 (deftype SQLiteQuotaLimiter [sys config]
   RateLimiter
-  (admit? [_ org-id]
-    (let [{:keys [write-fn limit prune-every]} config
+  (admit? [_ k]
+    (let [{:keys [org-id rate-key]} (if (map? k) k {:org-id k :rate-key "default"})
+          {:keys [write-fn limit prune-every]} config
           t (now-ms)
           b-ms (bucket-start-ms t)
           w-ms (oldest-live-bucket-ms t)
-          sql (admit-sql org-id b-ms w-ms limit)
+          sql (admit-sql org-id rate-key b-ms w-ms limit)
 
           ;; Write synchronously through queue
           status (try
