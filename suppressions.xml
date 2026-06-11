@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+    <suppress>
+        <notes><![CDATA[
+        Suppress false positive where dependency-check mistakes com.sturdystats/sturdy-sqlite for sqlite itself.
+        ]]></notes>
+        <gav regex="true">^com\.sturdystats:sturdy-sqlite:.*$</gav>
+        <cpe>cpe:/a:sqlite:sqlite</cpe>
+    </suppress>
+</suppressions>
