@@ -1,5 +1,7 @@
 # sturdy-throttle
 
+[![Clojars Project](https://img.shields.io/clojars/v/com.sturdystats/sturdy-throttle.svg)](https://clojars.org/com.sturdystats/sturdy-throttle)
+
 `sturdy-throttle` is a two-tiered rate limiting library for Clojure `ring` apps.
  It is designed to provide both DoS protection using a fast in-memory atom, and structured API quota enforcement using a SQLite table.
 
@@ -7,6 +9,14 @@
 
 1. **Pre-Authentication (IP Limiting)**: A fast, in-memory IP limiter using a fixed time-window.  Automatically sweeps and creates zero-garbage, returning empty `429 Too Many Requests` responses to save bandwidth against DoS attacks.
 2. **Post-Authentication (Quota Enforcement)**: An asynchronous batched SQLite writer that manages rolling hourly quotas based on `organization_id` and an optional `rate_key`.  It automatically migrates the required schema on startup and prunes old buckets in the background.
+
+## Installation
+
+Add to `deps.edn`:
+
+```clojure
+{:deps com.sturdystats/sturdy-throttle {:mvn/version "VERSION"}}
+```
 
 ## Reitit / Ring Application Integration
 
