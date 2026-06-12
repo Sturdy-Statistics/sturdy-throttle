@@ -63,7 +63,7 @@
 
 (defn prepare
   [_]
-  (b/copy-dir {:src-dirs ["src"]
+  (b/copy-dir {:src-dirs ["src" "resources"]
                :target-dir class-dir}))
 
 (defn jar
