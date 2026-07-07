@@ -4,6 +4,8 @@
    [sturdy.throttle.core :as core]
    [sturdy.throttle.memory :as memory]))
 
+(set! *warn-on-reflection* true)
+
 (deftest ip-limiter-test
   (let [limiter (memory/make-ip-limiter {:limit-per-second 5 :window-ms 100})
         ip "127.0.0.1"]

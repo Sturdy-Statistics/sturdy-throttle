@@ -1,6 +1,8 @@
 (ns sturdy.throttle
   (:require [sturdy.throttle.core :as core]))
 
+(set! *warn-on-reflection* true)
+
 (defn wrap-ip-rate-limit
   "Ring middleware that uses an in-memory IP rate limiter.
    Blocks offenders with a minimal 429 response to save bandwidth."

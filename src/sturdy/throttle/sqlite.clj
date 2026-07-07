@@ -1,11 +1,11 @@
 (ns sturdy.throttle.sqlite
   (:require
-   [ragtime.jdbc :as ragtime.jdbc]
-   [ragtime.repl :as ragtime.repl]
    [sturdy.sqlite.core :refer [make-datasource]]
    [sturdy.sqlite.types :as types]
    [sturdy.throttle.core :refer [RateLimiter]]
    [taoensso.telemere :as t]))
+
+(set! *warn-on-reflection* true)
 
 (def ^:const minute-ms 60000)
 (def ^:const hour-ms 3600000)
@@ -35,10 +35,19 @@
   (let [cutoff (- (bucket-start-ms now-ms) hour-ms)]
     ["DELETE FROM api_minute_buckets WHERE bucket_start_ms < ?" cutoff]))
 
+(defn- normalize-key [k]
+  (let [norm (if (map? k)
+               (assoc k :rate-key (or (:rate-key k) "default"))
+               {:org-id k :rate-key "default"})]
+    (when-not (:org-id norm)
+      (throw (ex-info "Rate limit key must contain a non-nil :org-id"
+                      {:key k})))
+    norm))
+
 (deftype SQLiteQuotaLimiter [sys config]
   RateLimiter
   (admit? [_ k]
-    (let [{:keys [org-id rate-key]} (if (map? k) k {:org-id k :rate-key "default"})
+    (let [{:keys [org-id rate-key]} (normalize-key k)
           {:keys [write-fn limit prune-every]} config
           t (now-ms)
           b-ms (bucket-start-ms t)

@@ -2,6 +2,8 @@
   (:require
    [sturdy.throttle.core :refer [RateLimiter]]))
 
+(set! *warn-on-reflection* true)
+
 (deftype IPAtomLimiter [state limit window-ms]
   RateLimiter
   (admit? [_ ip]

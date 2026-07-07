@@ -3,6 +3,8 @@
             [sturdy.throttle :as throttle]
             [sturdy.throttle.core :as core]))
 
+(set! *warn-on-reflection* true)
+
 (deftype MockLimiter [admit-fn]
   core/RateLimiter
   (admit? [_ key]

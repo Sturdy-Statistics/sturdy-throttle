@@ -1,61 +1,103 @@
 (ns sturdy.throttle.sqlite-test
   (:require
+   [babashka.fs :as fs]
    [clojure.test :refer [deftest is testing]]
+   [sturdy.sqlite.test :refer [with-test-db]]
    [sturdy.throttle.core :as core]
    [sturdy.throttle.sqlite :as sqlite]
-   [sturdy.throttle.test-support :refer [with-quiet-logging]])
-  (:import
-   (java.io File)))
+   [sturdy.throttle.test-support :refer [with-quiet-logging]]))
 
-(defn delete-recursive [^File f]
-  (when (.isDirectory f)
-    (doseq [c (.listFiles f)]
-      (delete-recursive c)))
-  (.delete f))
+(set! *warn-on-reflection* true)
 
-(deftest sqlite-quota-limiter-test
-  (let [db-dir ".test/sqlite-limiter"
-        db-name "testdb"
-        org-id (random-uuid)]
-    ;; Cleanup previous
-    (delete-recursive (File. db-dir))
-    (.mkdirs (File. db-dir))
-
+(deftest sqlite-quota-limiter-factory-test
+  (let [db-dir (str (fs/create-temp-dir {:prefix "sturdy-throttle-factory-test-"}))
+        db-name "factorydb"]
     (with-quiet-logging
-     (let [limiter (sqlite/make-quota-limiter {:db-dir db-dir
-                                               :db-name db-name
-                                               :limit 5
-                                               :prune-every 10})]
-       (try
-         (testing "Allows up to limit"
-           (dotimes [_ 5]
-             (is (true? (core/admit? limiter org-id)))))
+      (let [limiter (sqlite/make-quota-limiter {:db-dir db-dir
+                                                :db-name db-name
+                                                :limit 5
+                                                :prune-every nil})]
+        (try
+          (is (true? (core/admit? limiter "factory-org")))
+          (finally
+            (sqlite/close-limiter limiter)
+            (fs/delete-tree db-dir)))))))
 
-         (testing "Rejects over limit"
-           (is (false? (core/admit? limiter org-id))))
-
-         (testing "Different org gets its own limit"
-          (let [other-org (random-uuid)]
-            (is (true? (core/admit? limiter other-org)))))
-
-        (testing "Different rate_key on same org gets own limit"
-          (let [key-map {:org-id org-id :rate-key "other-endpoint"}]
+(deftest sqlite-quota-limiter-limit-test
+  (let [org-id (random-uuid)]
+    (with-quiet-logging
+      (with-test-db [sys "test-limit-db" {:classpath-prefix "sturdy-throttle-migrations"}]
+        (let [limiter (sqlite/->SQLiteQuotaLimiter sys {:write-fn (:write-fn sys)
+                                                        :limit 5
+                                                        :prune-every nil})]
+          (testing "Allows up to limit (raw UUID)"
             (dotimes [_ 5]
-              (is (true? (core/admit? limiter key-map))))
-            (is (false? (core/admit? limiter key-map)))))
+              (is (true? (core/admit? limiter org-id)))))
 
-        (testing "Pruning triggers via probability"
-          (with-redefs [rand-int (constantly 0)]
-            (is (true? (core/admit? limiter (random-uuid))))))
+          (testing "Rejects over limit"
+            (is (false? (core/admit? limiter org-id))))
 
-        (testing "Handles write errors gracefully"
-          (let [config (.-config ^sturdy.throttle.sqlite.SQLiteQuotaLimiter limiter)
-                sys (.-sys ^sturdy.throttle.sqlite.SQLiteQuotaLimiter limiter)
-                error-limiter (sqlite/->SQLiteQuotaLimiter 
-                               sys
-                               (assoc config :write-fn (fn [_] (throw (Exception. "Test Exception")))))]
-            (is (false? (core/admit? error-limiter (random-uuid))))))
+          (testing "Different org gets its own limit"
+            (let [other-org (random-uuid)]
+              (is (true? (core/admit? limiter other-org))))))))))
 
-         (finally
-           (sqlite/close-limiter limiter)
-           (delete-recursive (File. db-dir))))))))
+(deftest sqlite-quota-limiter-map-key-test
+  (let [org-id (random-uuid)]
+    (with-quiet-logging
+      (with-test-db [sys "test-map-key-db" {:classpath-prefix "sturdy-throttle-migrations"}]
+        (let [limiter (sqlite/->SQLiteQuotaLimiter sys {:write-fn (:write-fn sys)
+                                                        :limit 5
+                                                        :prune-every nil})]
+          (testing "Different rate_key on same org gets own limit"
+            (let [key-map {:org-id org-id :rate-key "other-endpoint"}]
+              (dotimes [_ 5]
+                (is (true? (core/admit? limiter key-map))))
+              (is (false? (core/admit? limiter key-map)))))
+
+          (testing "Map key without rate-key uses default rate key"
+            (let [fresh-org (random-uuid)
+                  key-map {:org-id fresh-org}]
+              (dotimes [_ 5]
+                (is (true? (core/admit? limiter key-map))))
+              (is (false? (core/admit? limiter key-map))))))))))
+
+(deftest sqlite-quota-limiter-validation-test
+  (with-quiet-logging
+    (with-test-db [sys "test-validation-db" {:classpath-prefix "sturdy-throttle-migrations"}]
+      (let [limiter (sqlite/->SQLiteQuotaLimiter sys {:write-fn (:write-fn sys)
+                                                      :limit 5
+                                                      :prune-every nil})]
+        (testing "Passing nil key throws ExceptionInfo"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Rate limit key must contain a non-nil :org-id"
+                                (core/admit? limiter nil))))
+
+        (testing "Passing map with nil org-id throws ExceptionInfo"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Rate limit key must contain a non-nil :org-id"
+                                (core/admit? limiter {:org-id nil})))
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Rate limit key must contain a non-nil :org-id"
+                                (core/admit? limiter {:rate-key "some-key"}))))))))
+
+(deftest sqlite-quota-limiter-error-test
+  (let [org-id (random-uuid)]
+    (with-quiet-logging
+      (with-test-db [sys "test-error-db" {:classpath-prefix "sturdy-throttle-migrations"}]
+        (let [limiter (sqlite/->SQLiteQuotaLimiter sys {:write-fn (:write-fn sys)
+                                                        :limit 5
+                                                        :prune-every nil})]
+          (testing "Handles write errors gracefully"
+            (let [config (.-config ^sturdy.throttle.sqlite.SQLiteQuotaLimiter limiter)
+                  sys (.-sys ^sturdy.throttle.sqlite.SQLiteQuotaLimiter limiter)
+                  error-limiter (sqlite/->SQLiteQuotaLimiter
+                                 sys
+                                 (assoc config :write-fn (fn [_] (throw (Exception. "Test Exception")))))]
+              (is (false? (core/admit? error-limiter org-id))))))))))
+
+(deftest sqlite-quota-limiter-prune-probability-test
+  (testing "Pruning triggers via probability using mock system map"
+    (let [async-called? (atom false)
+          mock-sys {:write-async-fn (fn [_sql] (reset! async-called? true))}
+          limiter (sqlite/->SQLiteQuotaLimiter mock-sys {:write-fn (constantly [{:next.jdbc/update-count 1}])
+                                                         :limit 5
+                                                         :prune-every 1})]
+      (is (true? (core/admit? limiter (random-uuid))))
+      (is (true? @async-called?)))))
