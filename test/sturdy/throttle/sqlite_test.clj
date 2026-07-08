@@ -9,6 +9,24 @@
 
 (set! *warn-on-reflection* true)
 
+(deftest sqlite-window-bucket-test
+  (testing "Window size maps to minute buckets"
+    (is (= 1 (sqlite/window-bucket-count 1)))
+    (is (= 1 (sqlite/window-bucket-count sqlite/minute-ms)))
+    (is (= 2 (sqlite/window-bucket-count (inc sqlite/minute-ms)))))
+
+  (testing "Default window preserves the previous hourly behavior"
+    (let [now-ms (* 100 sqlite/minute-ms)]
+      (is (= (* 41 sqlite/minute-ms)
+             (sqlite/oldest-live-bucket-ms now-ms)))))
+
+  (testing "Custom window controls oldest live bucket"
+    (let [now-ms (* 100 sqlite/minute-ms)]
+      (is (= (* 99 sqlite/minute-ms)
+             (sqlite/oldest-live-bucket-ms now-ms (* 2 sqlite/minute-ms))))
+      (is (= (* 96 sqlite/minute-ms)
+             (sqlite/oldest-live-bucket-ms now-ms (* 5 sqlite/minute-ms)))))))
+
 (deftest sqlite-quota-limiter-factory-test
   (let [db-dir (str (fs/create-temp-dir {:prefix "sturdy-throttle-factory-test-"}))
         db-name "factorydb"]
@@ -40,6 +58,25 @@
           (testing "Different org gets its own limit"
             (let [other-org (random-uuid)]
               (is (true? (core/admit? limiter other-org))))))))))
+
+(deftest sqlite-quota-limiter-window-test
+  (let [org-id (random-uuid)
+        base-ms (* 100 sqlite/minute-ms)]
+    (with-quiet-logging
+      (with-test-db [sys "test-window-db" {:classpath-prefix "sturdy-throttle-migrations"}]
+        (let [limiter (sqlite/->SQLiteQuotaLimiter sys {:write-fn (:write-fn sys)
+                                                        :limit 1
+                                                        :window-ms (* 2 sqlite/minute-ms)
+                                                        :prune-every nil})]
+          (testing "Rejects while a prior bucket is still inside the custom window"
+            (with-redefs [sqlite/now-ms (constantly base-ms)]
+              (is (true? (core/admit? limiter org-id))))
+            (with-redefs [sqlite/now-ms (constantly (+ base-ms sqlite/minute-ms))]
+              (is (false? (core/admit? limiter org-id)))))
+
+          (testing "Admits once the prior bucket falls outside the custom window"
+            (with-redefs [sqlite/now-ms (constantly (+ base-ms (* 2 sqlite/minute-ms)))]
+              (is (true? (core/admit? limiter org-id))))))))))
 
 (deftest sqlite-quota-limiter-map-key-test
   (let [org-id (random-uuid)]

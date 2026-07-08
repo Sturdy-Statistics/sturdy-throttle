@@ -8,7 +8,7 @@
 ## Overview
 
 1. **Pre-Authentication (IP Limiting)**: A fast, in-memory IP limiter using a fixed time-window.  Automatically sweeps and creates zero-garbage, returning empty `429 Too Many Requests` responses to save bandwidth against DoS attacks.
-2. **Post-Authentication (Quota Enforcement)**: An asynchronous batched SQLite writer that manages rolling hourly quotas based on `organization_id` and an optional `rate_key`.  It automatically migrates the required schema on startup and prunes old buckets in the background.
+2. **Post-Authentication (Quota Enforcement)**: An asynchronous batched SQLite writer that manages rolling quotas based on `organization_id` and an optional `rate_key`.  The quota window is configurable and defaults to one hour.  It automatically migrates the required schema on startup and prunes old buckets in the background.
 
 ## Installation
 
@@ -40,6 +40,7 @@ Initialize rate limiters during your application's startup sequence and store th
     (let [quota-limiter (sqlite/make-quota-limiter {:db-name "rate-limits"
                                                     :db-dir "/var/lib/my-app/limits"
                                                     :limit 25000
+                                                    :window-ms 3600000
                                                     :prune-every 1000})]
       {:ip-limiter ip-limiter
        :quota-limiter quota-limiter})))

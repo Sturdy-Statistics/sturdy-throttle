@@ -15,8 +15,15 @@
 (defn bucket-start-ms ^long [^long now-ms]
   (* (quot now-ms minute-ms) minute-ms))
 
-(defn oldest-live-bucket-ms ^long [^long now-ms]
-  (- (bucket-start-ms now-ms) (* 59 minute-ms)))
+(defn window-bucket-count ^long [^long window-ms]
+  (max 1 (long (Math/ceil (/ window-ms (double minute-ms))))))
+
+(defn oldest-live-bucket-ms
+  (^long [^long now-ms]
+   (oldest-live-bucket-ms now-ms hour-ms))
+  (^long [^long now-ms ^long window-ms]
+   (- (bucket-start-ms now-ms)
+      (* (dec (window-bucket-count window-ms)) minute-ms))))
 
 (defn admit-sql
   "A single atomic statement that checks the rate limit and UPSERTs if allowed.
@@ -31,9 +38,12 @@
     DO UPDATE SET request_count = request_count + 1"
    org-id rate-key bucket-ms org-id rate-key window-start limit])
 
-(defn prune-sql [now-ms]
-  (let [cutoff (- (bucket-start-ms now-ms) hour-ms)]
-    ["DELETE FROM api_minute_buckets WHERE bucket_start_ms < ?" cutoff]))
+(defn prune-sql
+  ([now-ms]
+   (prune-sql now-ms hour-ms))
+  ([now-ms window-ms]
+   (let [cutoff (oldest-live-bucket-ms now-ms window-ms)]
+     ["DELETE FROM api_minute_buckets WHERE bucket_start_ms < ?" cutoff])))
 
 (defn- normalize-key [k]
   (let [norm (if (map? k)
@@ -49,9 +59,10 @@
   (admit? [_ k]
     (let [{:keys [org-id rate-key]} (normalize-key k)
           {:keys [write-fn limit prune-every]} config
+          window-ms (or (:window-ms config) hour-ms)
           t (now-ms)
           b-ms (bucket-start-ms t)
-          w-ms (oldest-live-bucket-ms t)
+          w-ms (oldest-live-bucket-ms t window-ms)
           sql (admit-sql org-id rate-key b-ms w-ms limit)
 
           ;; Write synchronously through queue
@@ -67,7 +78,7 @@
       ;; Async prune using probability
       (when (and prune-every (zero? (rand-int prune-every)))
         (let [write-async-fn (:write-async-fn sys)]
-          (write-async-fn (prune-sql t))))
+          (write-async-fn (prune-sql t window-ms))))
 
       status)))
 
@@ -79,11 +90,13 @@
    `config` map requires:
    - :db-dir
    - :db-name
-   - :limit (number of requests per hour)
+   - :limit (number of requests per configured window)
+   - :window-ms (window size in milliseconds; defaults to one hour)
    - :prune-every (approximate number of requests before running a background prune, e.g. 1000)"
-  [{:keys [db-name db-dir limit prune-every batch-size profile-key]
+  [{:keys [db-name db-dir limit window-ms prune-every batch-size profile-key]
     :or {batch-size 500
          profile-key :write-intensive
+         window-ms hour-ms
          prune-every 1000}}]
   (let [sys (make-datasource db-name db-dir profile-key
                                          {:batch-size batch-size
@@ -93,6 +106,7 @@
     (->SQLiteQuotaLimiter sys
                           {:write-fn (:write-fn sys)
                            :limit limit
+                           :window-ms window-ms
                            :prune-every prune-every})))
 
 (defn close-limiter [limiter]
