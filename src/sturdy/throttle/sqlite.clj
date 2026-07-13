@@ -62,12 +62,10 @@
     DO UPDATE SET request_count = request_count + 1"
    org-id rate-key bucket-ms org-id rate-key window-start limit])
 
-(defn prune-sql
-  ([now-ms]
-   (prune-sql now-ms hour-ms))
-  ([now-ms window-ms]
-   (let [cutoff (oldest-live-bucket-ms now-ms window-ms)]
-     ["DELETE FROM api_minute_buckets WHERE bucket_start_ms < ?" cutoff])))
+(defn prune-sql [rate-key now-ms window-ms]
+  ["DELETE FROM api_minute_buckets
+    WHERE rate_key = ? AND bucket_start_ms < ?"
+   rate-key (oldest-live-bucket-ms now-ms window-ms)])
 
 (defn- normalize-key [k]
   (let [norm (if (map? k)
@@ -78,12 +76,12 @@
                       {:key k})))
     norm))
 
-(defn- maybe-prune! [sys prune-every t window-ms]
+(defn- maybe-prune! [sys prune-every rate-key t window-ms]
   (when prune-every
     (try
       (when (zero? (rand-int prune-every))
         (let [write-async-fn (:write-async-fn sys)]
-         (write-async-fn (prune-sql t window-ms))))
+         (write-async-fn (prune-sql rate-key t window-ms))))
       (catch Exception e
         (t/log! {:level :error
                  :id ::sqlite-prune-error
@@ -116,7 +114,7 @@
                      false))]
 
       ;; Best-effort async prune
-      (maybe-prune! sys prune-every t window-ms)
+      (maybe-prune! sys prune-every rate-key t window-ms)
 
       status)))
 
@@ -132,7 +130,9 @@
    - :window-ms (window size in milliseconds; defaults to one hour). The
      limiter rounds this up to wall-clock-aligned one-minute buckets for
      substantially better performance under load; boundaries can differ from
-     an exact rolling window by less than one minute.
+     an exact rolling window by less than one minute. A rate key must not be
+     used by simultaneous limiters with different windows in one database;
+     increasing its window has a warm-up period for previously pruned history.
    - :prune-every (approximate number of requests before running a background prune, e.g. 1000)"
   [{:keys [db-name db-dir limit window-ms prune-every batch-size profile-key]
     :or {batch-size 500

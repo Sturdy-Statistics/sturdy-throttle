@@ -174,6 +174,34 @@
             (with-redefs [sqlite/now-ms (constantly (+ base-ms (* 2 sqlite/minute-ms)))]
               (is (true? (core/admit? limiter org-id))))))))))
 
+(deftest sqlite-pruning-respects-rate-key-window-test
+  (let [org-id (random-uuid)
+        base-ms (* 100 sqlite/minute-ms)]
+    (with-quiet-logging
+      (with-test-db [sys "test-rate-key-window-pruning-db"
+                     {:classpath-prefix "sturdy-throttle-migrations"}]
+        (let [long-window-limiter
+              (sqlite/->SQLiteQuotaLimiter sys {:write-fn (:write-fn sys)
+                                                 :limit 1
+                                                 :window-ms (* 2 sqlite/minute-ms)
+                                                 :prune-every nil})
+              short-window-limiter
+              (sqlite/->SQLiteQuotaLimiter sys {:write-fn (:write-fn sys)
+                                                 :limit 1
+                                                 :window-ms sqlite/minute-ms
+                                                 :prune-every 1})]
+          (with-redefs [sqlite/now-ms (constantly base-ms)]
+            (is (true? (core/admit? long-window-limiter
+                                    {:org-id org-id :rate-key "long"}))))
+
+          (with-redefs [sqlite/now-ms
+                        (constantly (+ base-ms sqlite/minute-ms))]
+            (testing "Short-window pruning preserves buckets live for another rate key"
+              (is (true? (core/admit? short-window-limiter
+                                      {:org-id org-id :rate-key "short"})))
+              (is (false? (core/admit? long-window-limiter
+                                       {:org-id org-id :rate-key "long"}))))))))))
+
 (deftest sqlite-quota-limiter-map-key-test
   (let [org-id (random-uuid)]
     (with-quiet-logging

@@ -21,6 +21,10 @@ This is an intentional performance tradeoff.
 Aggregating requests into one row per organization, rate key, and minute keeps the table and write volume small, and allows quota checking and incrementing to remain a single atomic SQL statement under load.
 Use this limiter when minute-level approximation is acceptable rather than when the quota contract requires exact elapsed-time semantics.
 
+Pruning is scoped to the rate key that triggers it, so different rate keys may safely use different windows in the same database.
+The same `rate_key` must not simultaneously be used by two limiters with different windows in one database; their quota buckets intentionally share the same key space.
+When changing a rate key to a longer window, buckets already removed under the shorter policy cannot be recovered, so the longer window has a warm-up period while new history accumulates.
+
 ## Installation
 
 Add to `deps.edn`:
