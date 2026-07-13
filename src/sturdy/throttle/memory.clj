@@ -1,6 +1,7 @@
 (ns sturdy.throttle.memory
   (:require
-   [sturdy.throttle.core :refer [RateLimiter]]))
+   [sturdy.throttle.core :refer [RateLimiter]]
+   [taoensso.truss :refer [have!]]))
 
 (set! *warn-on-reflection* true)
 
@@ -23,6 +24,10 @@
   [{:keys [limit-per-second window-ms]
     :or {limit-per-second 50
          window-ms 1000}}]
+  (have! pos-int? limit-per-second
+         :data {:option :limit-per-second})
+  (have! pos-int? window-ms
+         :data {:option :window-ms})
   (let [now (System/currentTimeMillis)]
     (->IPAtomLimiter (atom {:expires-at (+ now window-ms) :counts {}})
                      limit-per-second

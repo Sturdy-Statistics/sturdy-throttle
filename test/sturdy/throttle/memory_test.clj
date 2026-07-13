@@ -31,3 +31,34 @@
         (is (true? (core/admit? limiter ip))))
       (is (false? (core/admit? limiter ip)))
       (is (true? (core/admit? limiter "192.168.1.1"))))))
+
+(deftest ip-limiter-configuration-validation-test
+  (testing "Accepts defaults and positive integer boundary values"
+    (is (true? (core/admit? (memory/make-ip-limiter {}) "default-config")))
+    (let [limiter (memory/make-ip-limiter {:limit-per-second 1
+                                           :window-ms 10000})]
+      (is (true? (core/admit? limiter "boundary")))
+      (is (false? (core/admit? limiter "boundary"))))
+    (is (true? (core/admit? (memory/make-ip-limiter {:limit-per-second 5
+                                                      :window-ms 1})
+                            "boundary-window"))))
+
+  (doseq [[option value] [[:limit-per-second nil]
+                          [:limit-per-second 0]
+                          [:limit-per-second -1]
+                          [:limit-per-second 1.5]
+                          [:limit-per-second "5"]
+                          [:window-ms nil]
+                          [:window-ms 0]
+                          [:window-ms -1]
+                          [:window-ms 1.5]
+                          [:window-ms "1000"]]]
+    (testing (str "Rejects invalid " option " value " (pr-str value))
+      (try
+        (memory/make-ip-limiter (assoc {:limit-per-second 5
+                                        :window-ms 1000}
+                                       option value))
+        (is false "Expected invalid configuration to throw")
+        (catch clojure.lang.ExceptionInfo e
+          (is (= option (get-in (ex-data e) [:data :option])))
+          (is (= value (get-in (ex-data e) [:arg :value]))))))))

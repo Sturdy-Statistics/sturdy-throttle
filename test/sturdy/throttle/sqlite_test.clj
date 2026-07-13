@@ -2,6 +2,7 @@
   (:require
    [babashka.fs :as fs]
    [clojure.test :refer [deftest is testing]]
+   [sturdy.sqlite.core :as sturdy-sqlite]
    [sturdy.sqlite.test :refer [with-test-db]]
    [sturdy.throttle.core :as core]
    [sturdy.throttle.sqlite :as sqlite]
@@ -40,6 +41,100 @@
           (finally
             (sqlite/close-limiter limiter)
             (fs/delete-tree db-dir)))))))
+
+(deftest sqlite-quota-limiter-configuration-validation-test
+  (let [valid-config {:db-dir "/tmp/sturdy-throttle-validation-test"
+                      :db-name "validation"
+                      :limit 5
+                      :window-ms sqlite/hour-ms
+                      :prune-every 1000
+                      :batch-size 500
+                      :profile-key :write-intensive}]
+    (testing "Accepts required options with defaults and positive integer boundaries"
+      (let [datasource-args (atom nil)]
+        (with-redefs [sturdy-sqlite/make-datasource
+                      (fn [& args]
+                        (reset! datasource-args args)
+                        {:write-fn (constantly [{:next.jdbc/update-count 1}])
+                         :write-async-fn (fn [_] nil)
+                         :migrate-fn (fn [_] nil)
+                         :close-fn (fn [] nil)})]
+          (let [limiter (sqlite/make-quota-limiter
+                         {:db-dir "/tmp/sturdy-throttle-validation-test"
+                          :db-name "validation"
+                          :limit 1
+                          :window-ms 1
+                          :batch-size 1})]
+            (try
+              (is (= ["validation"
+                      "/tmp/sturdy-throttle-validation-test"
+                      :write-intensive
+                      {:batch-size 1 :builder-opts sqlite/b-opts}]
+                     @datasource-args))
+              (is (true? (core/admit? limiter (random-uuid))))
+              (finally
+                (sqlite/close-limiter limiter)))))))
+
+    (doseq [[option value] [[:db-name nil]
+                            [:db-name ""]
+                            [:db-name "  "]
+                            [:db-name 42]
+                            [:db-dir nil]
+                            [:db-dir ""]
+                            [:db-dir "  "]
+                            [:db-dir 42]
+                            [:limit nil]
+                            [:limit 0]
+                            [:limit -1]
+                            [:limit 1.5]
+                            [:limit "5"]
+                            [:window-ms nil]
+                            [:window-ms 0]
+                            [:window-ms -1]
+                            [:window-ms 1.5]
+                            [:window-ms "60000"]
+                            [:prune-every 0]
+                            [:prune-every -1]
+                            [:prune-every 1.5]
+                            [:prune-every "1000"]
+                            [:batch-size nil]
+                            [:batch-size 0]
+                            [:batch-size -1]
+                            [:batch-size 1.5]
+                            [:batch-size "500"]
+                            [:profile-key nil]
+                            [:profile-key "write-intensive"]]]
+      (testing (str "Rejects invalid " option " value " (pr-str value)
+                    " before allocating a datasource")
+        (let [datasource-called? (atom false)]
+          (with-redefs [sturdy-sqlite/make-datasource
+                        (fn [& _]
+                          (reset! datasource-called? true)
+                          (throw (Exception. "datasource should not be created")))]
+            (try
+              (sqlite/make-quota-limiter (assoc valid-config option value))
+              (is false "Expected invalid configuration to throw")
+              (catch clojure.lang.ExceptionInfo e
+                (is (= option (get-in (ex-data e) [:data :option])))
+                (is (= value (get-in (ex-data e) [:arg :value])))))
+            (is (false? @datasource-called?))))))
+
+    (testing "nil disables pruning"
+      (let [migrated? (atom false)
+            closed? (atom false)]
+        (with-redefs [sturdy-sqlite/make-datasource
+                      (fn [& _]
+                        {:write-fn (constantly [{:next.jdbc/update-count 1}])
+                         :write-async-fn (fn [_] nil)
+                         :migrate-fn (fn [_] (reset! migrated? true))
+                         :close-fn (fn [] (reset! closed? true))})]
+          (let [limiter (sqlite/make-quota-limiter
+                         (assoc valid-config :prune-every nil))]
+            (try
+              (is (true? @migrated?))
+              (finally
+                (sqlite/close-limiter limiter)))
+            (is (true? @closed?))))))))
 
 (deftest sqlite-quota-limiter-limit-test
   (let [org-id (random-uuid)]

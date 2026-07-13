@@ -1,9 +1,11 @@
 (ns sturdy.throttle.sqlite
   (:require
+   [clojure.string :as str]
    [sturdy.sqlite.core :refer [make-datasource]]
    [sturdy.sqlite.types :as types]
    [sturdy.throttle.core :refer [RateLimiter]]
-   [taoensso.telemere :as t]))
+   [taoensso.telemere :as t]
+   [taoensso.truss :refer [have!]]))
 
 (set! *warn-on-reflection* true)
 
@@ -11,6 +13,28 @@
 (def ^:const hour-ms 3600000)
 
 (defn now-ms [] (System/currentTimeMillis))
+
+(defn- nonblank-string? [value]
+  (and (string? value) (not (str/blank? value))))
+
+(defn- valid-path? [value]
+  (or (instance? java.io.File value)
+      (instance? java.nio.file.Path value)
+      (nonblank-string? value)))
+
+(defn- nil-or-positive-integer? [value]
+  (or (nil? value) (pos-int? value)))
+
+(defn- validate-config!
+  [{:keys [db-name db-dir limit window-ms prune-every batch-size profile-key]}]
+  (have! nonblank-string? db-name :data {:option :db-name})
+  (have! valid-path? db-dir :data {:option :db-dir})
+  (have! pos-int? limit :data {:option :limit})
+  (have! pos-int? window-ms :data {:option :window-ms})
+  (have! nil-or-positive-integer? prune-every
+         :data {:option :prune-every})
+  (have! pos-int? batch-size :data {:option :batch-size})
+  (have! keyword? profile-key :data {:option :profile-key}))
 
 (defn bucket-start-ms ^long [^long now-ms]
   (* (quot now-ms minute-ms) minute-ms))
@@ -108,6 +132,13 @@
          profile-key :write-intensive
          window-ms hour-ms
          prune-every 1000}}]
+  (validate-config! {:db-name db-name
+                     :db-dir db-dir
+                     :limit limit
+                     :window-ms window-ms
+                     :prune-every prune-every
+                     :batch-size batch-size
+                     :profile-key profile-key})
   (let [sys (make-datasource db-name db-dir profile-key
                              {:batch-size batch-size
                               :builder-opts b-opts})]
