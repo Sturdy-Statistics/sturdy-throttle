@@ -6,7 +6,8 @@
    [sturdy.sqlite.test :refer [with-test-db]]
    [sturdy.throttle.core :as core]
    [sturdy.throttle.sqlite :as sqlite]
-   [sturdy.throttle.test-support :refer [with-quiet-logging]]))
+   [sturdy.throttle.test-support :refer [with-quiet-logging]]
+   [taoensso.telemere :as t]))
 
 (set! *warn-on-reflection* true)
 
@@ -210,19 +211,34 @@
                                 (core/admit? limiter {:rate-key "some-key"}))))))))
 
 (deftest sqlite-quota-limiter-error-test
-  (let [org-id (random-uuid)]
+  (let [org-id (random-uuid)
+        rate-key "test-endpoint"
+        write-error (Exception. "Test Exception")]
     (with-quiet-logging
       (with-test-db [sys "test-error-db" {:classpath-prefix "sturdy-throttle-migrations"}]
         (let [limiter (sqlite/->SQLiteQuotaLimiter sys {:write-fn (:write-fn sys)
                                                         :limit 5
                                                         :prune-every nil})]
-          (testing "Handles write errors gracefully"
+          (testing "Fails closed and logs structured write errors"
             (let [config (.-config ^sturdy.throttle.sqlite.SQLiteQuotaLimiter limiter)
                   sys (.-sys ^sturdy.throttle.sqlite.SQLiteQuotaLimiter limiter)
+                  logged-signal (promise)
+                  handler-id ::sqlite-error-test
                   error-limiter (sqlite/->SQLiteQuotaLimiter
                                  sys
-                                 (assoc config :write-fn (fn [_] (throw (Exception. "Test Exception")))))]
-              (is (false? (core/admit? error-limiter org-id))))))))))
+                                 (assoc config :write-fn (fn [_] (throw write-error))))]
+              (t/add-handler! handler-id #(deliver logged-signal %))
+              (try
+                (is (false? (core/admit? error-limiter
+                                         {:org-id org-id :rate-key rate-key})))
+                (let [signal (deref logged-signal 1000 nil)]
+                  (is (some? signal) "Expected a SQLite error log signal")
+                  (is (= ::sqlite/sqlite-admit-error (:id signal)))
+                  (is (identical? write-error (:error signal)))
+                  (is (= {:org-id org-id :rate-key rate-key}
+                         (:data signal))))
+                (finally
+                  (t/remove-handler! handler-id))))))))))
 
 (deftest sqlite-quota-limiter-prune-probability-test
   (testing "Pruning triggers via probability using mock system map"

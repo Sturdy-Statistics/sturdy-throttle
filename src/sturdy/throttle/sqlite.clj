@@ -108,7 +108,11 @@
                        true
                        false))
                    (catch Exception e
-                     (t/log! {:level :error} (str "sturdy-throttle SQLite error: " (.getMessage e)))
+                     (t/log! {:level :error :id ::sqlite-admit-error
+                              :error e
+                              :data {:org-id org-id
+                                     :rate-key rate-key}
+                              :msg "sturdy-throttle SQLite admission failed"})
                      false))]
 
       ;; Best-effort async prune
