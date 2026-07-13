@@ -138,3 +138,24 @@
                                                          :prune-every 1})]
       (is (true? (core/admit? limiter (random-uuid))))
       (is (true? @async-called?)))))
+
+(deftest sqlite-quota-limiter-prune-error-test
+  (let [mock-sys {:write-async-fn (fn [_sql]
+                                    (throw (Exception. "prune enqueue failed")))}]
+    (testing "A prune enqueue failure does not change an admitted decision"
+      (let [limiter (sqlite/->SQLiteQuotaLimiter
+                     mock-sys
+                     {:write-fn (constantly [{:next.jdbc/update-count 1}])
+                      :limit 5
+                      :prune-every 1})]
+        (with-quiet-logging
+          (is (true? (core/admit? limiter (random-uuid)))))))
+
+    (testing "A prune enqueue failure does not change a rejected decision"
+      (let [limiter (sqlite/->SQLiteQuotaLimiter
+                     mock-sys
+                     {:write-fn (constantly [{:next.jdbc/update-count 0}])
+                      :limit 5
+                      :prune-every 1})]
+        (with-quiet-logging
+          (is (false? (core/admit? limiter (random-uuid)))))))))

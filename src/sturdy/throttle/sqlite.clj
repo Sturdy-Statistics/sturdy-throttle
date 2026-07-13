@@ -54,6 +54,18 @@
                       {:key k})))
     norm))
 
+(defn- maybe-prune! [sys prune-every t window-ms]
+  (when prune-every
+    (try
+      (when (zero? (rand-int prune-every))
+        (let [write-async-fn (:write-async-fn sys)]
+         (write-async-fn (prune-sql t window-ms))))
+      (catch Exception e
+        (t/log! {:level :error
+                 :id ::sqlite-prune-error
+                 :error e
+                 :msg "sturdy-throttle SQLite prune scheduling failed"})))))
+
 (deftype SQLiteQuotaLimiter [sys config]
   RateLimiter
   (admit? [_ k]
@@ -75,10 +87,8 @@
                      (t/log! {:level :error} (str "sturdy-throttle SQLite error: " (.getMessage e)))
                      false))]
 
-      ;; Async prune using probability
-      (when (and prune-every (zero? (rand-int prune-every)))
-        (let [write-async-fn (:write-async-fn sys)]
-          (write-async-fn (prune-sql t window-ms))))
+      ;; Best-effort async prune
+      (maybe-prune! sys prune-every t window-ms)
 
       status)))
 
@@ -99,8 +109,8 @@
          window-ms hour-ms
          prune-every 1000}}]
   (let [sys (make-datasource db-name db-dir profile-key
-                                         {:batch-size batch-size
-                                          :builder-opts b-opts})]
+                             {:batch-size batch-size
+                              :builder-opts b-opts})]
     ;; Run migrations on startup
     ((:migrate-fn sys) "sturdy-throttle-migrations")
     (->SQLiteQuotaLimiter sys
