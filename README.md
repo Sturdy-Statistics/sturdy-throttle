@@ -94,8 +94,10 @@ You can wrap your routes using the provided middleware functions in
      {:middleware [[throttle/wrap-ip-rate-limit
                     ip-limiter
                     (fn [req]
-                      ;; Extract IP from headers (behind proxy) or direct remote address
-                      (or (get-in req [:headers "x-forwarded-for"])
+                      ;; Only trust an IP header set or sanitized by your own
+                      ;; reverse proxy (for example, Nginx's X-Real-IP).
+                      ;; Never trust a client-controlled forwarding header.
+                      (or (get-in req [:headers "x-real-ip"])
                           (:remote-addr req)))]]}})))
 ```
 
