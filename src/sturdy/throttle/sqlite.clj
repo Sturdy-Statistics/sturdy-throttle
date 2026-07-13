@@ -128,8 +128,11 @@
    `config` map requires:
    - :db-dir
    - :db-name
-   - :limit (number of requests per configured window)
-   - :window-ms (window size in milliseconds; defaults to one hour)
+   - :limit (number of requests per approximate window)
+   - :window-ms (window size in milliseconds; defaults to one hour). The
+     limiter rounds this up to wall-clock-aligned one-minute buckets for
+     substantially better performance under load; boundaries can differ from
+     an exact rolling window by less than one minute.
    - :prune-every (approximate number of requests before running a background prune, e.g. 1000)"
   [{:keys [db-name db-dir limit window-ms prune-every batch-size profile-key]
     :or {batch-size 500

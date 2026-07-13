@@ -8,7 +8,18 @@
 ## Overview
 
 1. **Pre-Authentication (IP Limiting)**: A fast, in-memory IP limiter using a fixed time-window.  Automatically sweeps and creates zero-garbage, returning empty `429 Too Many Requests` responses to save bandwidth against DoS attacks.
-2. **Post-Authentication (Quota Enforcement)**: An asynchronous batched SQLite writer that manages rolling quotas based on `organization_id` and an optional `rate_key`.  The quota window is configurable and defaults to one hour.  It automatically migrates the required schema on startup and prunes old buckets in the background.
+2. **Post-Authentication (Quota Enforcement)**: A batched SQLite writer that manages approximate rolling quotas based on `organization_id` and an optional `rate_key`.  The quota window is configurable and defaults to one hour.  It automatically migrates the required schema on startup and prunes old buckets in the background.
+
+### SQLite Quota Window Semantics
+
+The SQLite limiter deliberately approximates a rolling window with wall-clock-aligned, one-minute buckets.
+It rounds `:window-ms` up to a whole number of minute buckets and sums the current bucket plus the preceding live buckets.
+Consequently, enforcement boundaries can differ from an exact per-request rolling window by less than one minute.
+Sub-minute windows use one calendar-minute bucket, and traffic can burst when an old bucket leaves the window at a minute boundary.
+
+This is an intentional performance tradeoff.
+Aggregating requests into one row per organization, rate key, and minute keeps the table and write volume small, and allows quota checking and incrementing to remain a single atomic SQL statement under load.
+Use this limiter when minute-level approximation is acceptable rather than when the quota contract requires exact elapsed-time semantics.
 
 ## Installation
 
